@@ -36,7 +36,6 @@ clap = { workspace = true }
 colored = { workspace = true }
 indicatif = { workspace = true }
 once_cell = { workspace = true }
-tikv-jemallocator = { workspace = true }
 hashbrown = { workspace = true }
 rustc-hash = { workspace = true }
 sha2 = { workspace = true }
@@ -51,6 +50,9 @@ bytes = { workspace = true }
 # Optional arena allocator and zero-copy archiving
 bumpalo = "3.15"
 rkyv = { workspace = true }
+
+[target.'cfg(macos)'.dependencies]
+tikv-jemallocator = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -71,6 +73,9 @@ name = "core_micro"
 harness = false
 
 [features]
-# Enable jemalloc as the global allocator and expose jemalloc controls
-default = ["jemalloc"]
+default = []
 jemalloc = []
+
+[target.'cfg(macos)'.features]
+# Enable jemalloc as the global allocator
+default = ["jemalloc"]
