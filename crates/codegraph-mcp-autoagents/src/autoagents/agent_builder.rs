@@ -1,4 +1,4 @@
-// ABOUTME: Factory for creating AutoAgents with CodeGraph-specific configuration
+﻿// ABOUTME: Factory for creating AutoAgents with CodeGraph-specific configuration
 // ABOUTME: Bridges codegraph_ai LLM providers to AutoAgents ChatProvider
 // ABOUTME: Builder for tier-aware CodeGraph agents with graph analysis tools
 
@@ -6,7 +6,9 @@ use async_trait::async_trait;
 #[cfg(test)]
 use autoagents::llm::chat::ChatMessageBuilder;
 use autoagents::llm::chat::ChatProvider;
-use autoagents::llm::chat::{ChatMessage, ChatResponse, ChatRole, MessageType, Tool};
+use autoagents::llm::chat::{
+    ChatMessage, ChatResponse, ChatRole, MessageType, StructuredOutputFormat, Tool,
+};
 use autoagents::llm::completion::{CompletionProvider, CompletionRequest, CompletionResponse};
 use autoagents::llm::embedding::EmbeddingProvider;
 use autoagents::llm::error::LLMError;
@@ -51,6 +53,7 @@ pub(crate) fn read_memory_window_config() -> usize {
 }
 
 use crate::autoagents::progress_notifier::ProgressCallback;
+use codegraph_mcp_core::context_aware_limits::ContextTier;
 
 /// Adapter that bridges codegraph_ai::LLMProvider to AutoAgents ChatProvider
 pub struct CodeGraphChatAdapter {
@@ -156,20 +159,18 @@ impl CodeGraphChatAdapter {
 
         Some(tokens)
     }
-}
 
-#[async_trait]
-impl ChatProvider for CodeGraphChatAdapter {
-    async fn chat(
+    /// Internal helper that does the actual chat call, with optional structured output
+    async fn chat_internal(
         &self,
         messages: &[ChatMessage],
         tools: Option<&[Tool]>,
-        json_schema: Option<autoagents::llm::chat::StructuredOutputFormat>,
+        json_schema: Option<StructuredOutputFormat>,
     ) -> Result<Box<dyn ChatResponse>, LLMError> {
         // Log tool and message info
         let tool_count = tools.map_or(0, |t| t.len());
         tracing::info!(
-            "📨 chat() called with {} messages, {} tools",
+            "📨 chat_internal() called with {} messages, {} tools",
             messages.len(),
             tool_count
         );
@@ -347,12 +348,33 @@ impl ChatProvider for CodeGraphChatAdapter {
             step_counter: Arc::new(AtomicU64::new(1)),
         }))
     }
+}
+
+#[async_trait]
+impl ChatProvider for CodeGraphChatAdapter {
+    async fn chat(
+        &self,
+        messages: &[ChatMessage],
+        json_schema: Option<StructuredOutputFormat>,
+    ) -> Result<Box<dyn ChatResponse>, LLMError> {
+        // Plain chat: no structured output schema
+        self.chat_internal(messages, None, json_schema).await
+    }
+
+    async fn chat_with_tools(
+        &self,
+        messages: &[ChatMessage],
+        tools: Option<&[Tool]>,
+        json_schema: Option<StructuredOutputFormat>,
+    ) -> Result<Box<dyn ChatResponse>, LLMError> {
+        // Full-featured chat: tools + optional structured output
+        self.chat_internal(messages, tools, json_schema).await
+    }
 
     async fn chat_stream(
         &self,
         _messages: &[ChatMessage],
-        _tools: Option<&[Tool]>,
-        _json_schema: Option<autoagents::llm::chat::StructuredOutputFormat>,
+        _json_schema: Option<StructuredOutputFormat>,
     ) -> Result<
         std::pin::Pin<Box<dyn futures::Stream<Item = Result<String, LLMError>> + Send>>,
         LLMError,
@@ -364,7 +386,7 @@ impl ChatProvider for CodeGraphChatAdapter {
         &self,
         _messages: &[ChatMessage],
         _tools: Option<&[Tool]>,
-        _json_schema: Option<autoagents::llm::chat::StructuredOutputFormat>,
+        _json_schema: Option<StructuredOutputFormat>,
     ) -> Result<
         std::pin::Pin<
             Box<
@@ -385,7 +407,7 @@ impl CompletionProvider for CodeGraphChatAdapter {
     async fn complete(
         &self,
         _req: &CompletionRequest,
-        _json_schema: Option<autoagents::llm::chat::StructuredOutputFormat>,
+        _json_schema: Option<StructuredOutputFormat>,
     ) -> Result<CompletionResponse, LLMError> {
         Err(LLMError::Generic(
             "Completion not supported - use ChatProvider instead".to_string(),
@@ -626,6 +648,12 @@ impl ChatResponse for CodeGraphChatResponse {
 // Tier-Aware ReAct Agent Wrapper
 // ============================================================================
 
+use autoagents::core::agent::prebuilt::executor::ReActAgent;
+use autoagents::core::agent::{
+    AgentDeriveT, AgentExecutor, AgentHooks, Context, DirectAgentHandle, ExecutorConfig,
+};
+use autoagents::core::tool::{shared_tools_to_boxes, ToolT};
+
 /// Wrapper around ReActAgent that overrides max_turns configuration
 /// This allows tier-aware max_turns without forking AutoAgents
 #[derive(Debug)]
@@ -649,11 +677,11 @@ impl<T: AgentDeriveT + AgentHooks + Clone> TierAwareReActAgent<T> {
 impl<T: AgentDeriveT + AgentHooks + Clone> AgentDeriveT for TierAwareReActAgent<T> {
     type Output = T::Output;
 
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &str {
         self.inner_derive.description()
     }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         self.inner_derive.name()
     }
 
@@ -717,18 +745,12 @@ use crate::autoagents::tier_plugin::TierAwarePromptPlugin;
 use crate::autoagents::tools::graph_tools::*;
 use crate::autoagents::tools::tool_executor_adapter::GraphToolFactory;
 use codegraph_mcp_core::analysis::AnalysisType;
-use codegraph_mcp_core::context_aware_limits::ContextTier;
 use codegraph_mcp_tools::GraphToolExecutor;
 
 use crate::autoagents::codegraph_agent::CodeGraphAgentOutput;
 use autoagents::core::agent::memory::SlidingWindowMemory;
-use autoagents::core::agent::prebuilt::executor::ReActAgent;
 use autoagents::core::agent::AgentBuilder;
-use autoagents::core::agent::{
-    AgentDeriveT, AgentExecutor, AgentHooks, Context, DirectAgentHandle, ExecutorConfig,
-};
 use autoagents::core::error::Error as AutoAgentsError;
-use autoagents::core::tool::{shared_tools_to_boxes, ToolT};
 
 /// Agent implementation for CodeGraph with manual tool registration
 #[derive(Debug, Clone)]
@@ -743,13 +765,11 @@ pub struct CodeGraphReActAgent {
 impl AgentDeriveT for CodeGraphReActAgent {
     type Output = CodeGraphAgentOutput;
 
-    fn description(&self) -> &'static str {
-        // Use Box::leak to convert runtime String to &'static str
-        // This is the standard AutoAgents pattern for dynamic descriptions
-        Box::leak(self.system_prompt.clone().into_boxed_str())
+    fn description(&self) -> &str {
+        &self.system_prompt
     }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "codegraph_agent"
     }
 
@@ -842,7 +862,7 @@ impl CodeGraphAgentBuilder {
         // Get executor adapter for tool construction
         let executor_adapter = self.tool_factory.adapter();
 
-        // Manually construct all 6 tools with the executor (Arc-wrapped for sharing)
+        // Manually construct all tools with the executor (Arc-wrapped for sharing)
         let tools: Vec<Arc<dyn ToolT>> = vec![
             Arc::new(SemanticCodeSearch::new(executor_adapter.clone())),
             Arc::new(GetTransitiveDependencies::new(executor_adapter.clone())),
@@ -1110,7 +1130,7 @@ mod tests {
         let adapter = CodeGraphChatAdapter::new(mock_llm, ContextTier::Medium);
 
         let messages = vec![ChatMessage::user().content("Hello").build()];
-        let response = adapter.chat(&messages, None, None).await.unwrap();
+        let response = adapter.chat(&messages, None).await.unwrap();
 
         assert_eq!(response.text(), Some("Echo: Hello".to_string()));
     }

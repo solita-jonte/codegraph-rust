@@ -51,7 +51,7 @@ pub use types::*;
 pub use versioning::*;
 pub use watch::*;
 
-// Use jemalloc as the global allocator when the feature is enabled
-#[cfg(feature = "jemalloc")]
+// Use mimalloc as the global allocator when the feature is enabled
+#[cfg(feature = "mimalloc")]
 #[global_allocator]
-static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;

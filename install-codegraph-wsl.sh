@@ -1,11 +1,11 @@
 #!/bin/bash
-# ABOUTME: Installs CodeGraph CLI with autoagent-lates features and SurrealDB enabled.
+# ABOUTME: Installs CodeGraph CLI with some features and SurrealDB enabled.
 # ABOUTME: Checks WSL Ubuntu prerequisites and compiles codegraph-mcp with agentic tooling enabled.
 
 set -euo pipefail
 
-# Build with LATS
-FEATURE_FLAGS="--features autoagents-lats"
+# Build with some features
+FEATURE_FLAGS="--features autoagents-lats,ai-enhanced,codegraph-ai/openai-compatible,embeddings-ollama,embeddings-lmstudio,server-http"
 SURR_URL="${CODEGRAPH_SURREALDB_URL:-ws://localhost:3004}"
 SURR_NAMESPACE="${CODEGRAPH_SURREALDB_NAMESPACE:-ouroboros}"
 SURR_DATABASE="${CODEGRAPH_SURREALDB_DATABASE:-codegraph}"
@@ -16,7 +16,7 @@ info() { printf '[INFO] %s\n' "$1"; }
 warn() { printf '[WARN] %s\n' "$1"; }
 fail() { printf '[ERROR] %s\n' "$1"; exit 1; }
 
-info "Preparing to install CodeGraph (autoagent-lats)"
+info "Preparing to install CodeGraph"
 
 [[ "${WSL_DISTRO_NAME:-}" == Ubuntu* ]] || fail "This installer targets WSL Ubuntu Linux."
 command -v apt >/dev/null 2>&1 || fail "apt is required"
@@ -24,6 +24,7 @@ command -v cargo >/dev/null 2>&1 || fail "cargo is required"
 command -v rustup >/dev/null 2>&1 || fail "rustup is required"
 command -v pkg-config >/dev/null 2>&1 || fail "pkg-config is required"
 command -v c++ >/dev/null 2>&1 || fail "c++ is required (build-essential)"
+command -v zstd >/dev/null 2>&1 || fail "zstd is required"
 
 # Check for SurrealDB
 if ! command -v surreal >/dev/null 2>&1; then
@@ -36,8 +37,9 @@ fi
 
 # Check for Ollama (optional but recommended)
 if ! command -v ollama >/dev/null 2>&1; then
-    warn "Ollama not found - local LLM/embedding support will be limited"
-    warn "Install from: https://ollama.com/download"
+    warn "Ollama not found; installing via script..."
+    curl -fsSL https://ollama.com/install.sh | sh
+    warn "Ollama installed"
 else
     info "Ollama detected"
 fi
@@ -56,8 +58,8 @@ cargo install --target x86_64-unknown-linux-gnu --path crates/codegraph-mcp-serv
 info "CodeGraph installed to ${INSTALL_PATH}"
 cat <<EOF
 
-✅ Installation Complete - AutoAgent-LATS Build
-=============================================
+✅ Installation Complete
+========================
 
 Enabled Features:
 -----------------

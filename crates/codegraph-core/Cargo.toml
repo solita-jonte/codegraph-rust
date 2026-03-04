@@ -36,6 +36,7 @@ clap = { workspace = true }
 colored = { workspace = true }
 indicatif = { workspace = true }
 once_cell = { workspace = true }
+mimalloc = { workspace = true }
 hashbrown = { workspace = true }
 rustc-hash = { workspace = true }
 sha2 = { workspace = true }
@@ -51,13 +52,10 @@ bytes = { workspace = true }
 bumpalo = "3.15"
 rkyv = { workspace = true }
 
-[target.'cfg(macos)'.dependencies]
-tikv-jemallocator = { workspace = true }
-
-[target.'cfg(unix)'.dependencies]
+[target.'cfg(target_family = "unix")'.dependencies]
 libc = "0.2"
 
-[target.'cfg(windows)'.dependencies]
+[target.'cfg(target_family = "windows")'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_Memory"
@@ -73,9 +71,5 @@ name = "core_micro"
 harness = false
 
 [features]
-default = []
-jemalloc = []
-
-[target.'cfg(macos)'.features]
-# Enable jemalloc as the global allocator
-default = ["jemalloc"]
+default = ["mimalloc"]
+mimalloc = []
